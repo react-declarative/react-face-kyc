@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <title>FaceWASM-worker</title>
+  <script src="/assets/facewasm/facewasm.js"></script>
+</head>
+
+<body>
+  <video id="video" loop></video>
+  <canvas id="canvas"></canvas>
+  <script>
+    (async function () {
+
+      const RED = '#FF124A';
+      const GREEN = '#A0D3B4';
+      let error = false;
+
+      const msg = (text, color) => {
+        //console.log(text, color === RED ? 'RED' : color === GREEN ? 'GREEN' : color);
+        if (parent) {
+          parent.postMessage({ type: 'facewasm-msg', text, color });
+        } else if (!error) {
+          alert('window.parent unavalible');
+          error = true;
+        }
+      };
+
+      const cord = ({ x, y, w, h }) => {
+        // console.log('x=', x, 'y=', y, 'w=', w, 'h=', h);
+        if (parent) {
+          parent.postMessage({
+            type: 'facewasm-cord', 
+            x: Math.floor(x),
+            y: Math.floor(y),
+            w: Math.floor(w),
+            h: Math.floor(h),
+          });
+        } else if (!error) {
+          alert('window.parent unavalible');
+          error = true;
+        }
+      };
+
+      const state = (state) => {
+        // console.log('state=', state);
+        if (parent) {
+          parent.postMessage({ type: 'facewasm-state', state });
+        } else if (!error) {
+          alert('window.parent unavalible');
+          error = true;
+        }
+      };
+
+      const createFaceDebounce = () => {
+        const faces = [];
+        const delta = 10;
+        return (f) => {
+          faces.unshift([f.x, f.y, f.w, f.h]);
+          if (faces.length < delta) {
+            Array.apply(null, { length: delta - 1 }).forEach(() => faces.push([f.x, f.y, f.w, f.h]));
+          }
+          while (faces.length > delta) {
+            faces.pop();
+          }
+          const [x, y, w, h] = faces.reduce(([x1, y1, w1, h1], [x2, y2, w2, h2]) => [
+            x1 + x2, y1 + y2, w1 + w2, h1 + h2
+          ], [0, 0, 0, 0]).map((v) => v / faces.length);
+          return { x, y, w, h };
+        };
+      };
+
+      const config = {
+        angles: {
+          yaw: 0,
+          pitch: 0
+        },
+        qualityThreshold: 0.2,
+        yawThreshold: 5,
+        pitchThreshold: 5,
+        matchTimeout: 2 * 1000,
+        successDetectionRate: 0.5,
+        failDetectionRate: 0.5,
+        smoothBboxLength: 4,
+        calcLivenessScoreInterval: 500,
+        calcLivenessScoreCount: 4,
+      };
+
+      const { hash } = location;
+
+      let height;
+      let width;
+
+      if (hash) {
+        const config = new Map(hash.substr(1).split(';').map((v) => v.split('=').map((p) => p.trim())));
+        if (config.has('height')) {
+          height = Number(config.get('height'));
+        } else {
+          alert('missed height');
+          return;
+        }
+        if (config.has('width')) {
+          width = Number(config.get('width'));
+        } else {
+          alert('missed width');
+          return;
+        }
+      } else {
+        alert('missed hash');
+        return;
+      }
+
+      const canvas = document.getElementById('canvas');
+      const video = document.getElementById('video');
+
+      video.style.height = `${height}px`;
+      canvas.height = height;
+
+      video.style.width = `${width}px`;
+      canvas.width = width;
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'user',
+          width: {
+            min: 0,
+            max: width,
+          },
+          height: {
+            min: 0,
+            max: height,
+          },
+        },
+      });
+
+      video.style.objectFit = 'cover';
+      video.srcObject = stream;
+      video.play();
+
+      const context = canvas.getContext('2d');
+
+      const initFacewasm = (res) => {
+        const detector = TevianFaceWasm({
+          locateFile: (path, prefix) => {
+            if (path === 'facewasm.data') {
+              return '/assets/facewasm/facewasm.data';
+            }
+            return prefix + path;
+          },
+          log: (...args) => console.log(...args),
+          error: (...args) => console.error(...args),
+          onRuntimeInitialized: () => {
+            res(detector);
+          }
+        });
+      };
+
+      const calcRoi = ({ height, width }) => {
+        const minSide = Math.min(width, height);
+        const roiSide = 0.6 * minSide;
+        const visibleRoi = {
+          x: Math.floor(0.5 * width - 0.5 * roiSide),
+          y: Math.floor(0.5 * height - 0.5 * roiSide),
+          w: Math.ceil(roiSide),
+          h: Math.ceil(roiSide),
+        };
+        return [minSide, roiSide, visibleRoi];
+      };
+
+      let yaw = null;
+      let pitch = null;
+      const [minSide, roiSide, visibleRoi] = calcRoi({ height, width });
+      const task = Object.assign({}, config);
+
+      const debounce = createFaceDebounce();
+
+      const process = (FACEWASM_DETECTOR) => {
+        const { data: rgbaImage } = context.getImageData(0, 0, width, height);
+        const { bbox, angles, quality } = FACEWASM_DETECTOR.detect({ height, width, rgbaImage });
+        if (bbox) {
+          yaw = yaw != null ? 0.8 * yaw + 0.2 * angles.yaw : angles.yaw;
+          pitch = pitch != null ? 0.8 * pitch + 0.2 * angles.pitch : angles.pitch;
+          if (
+            bbox.x < visibleRoi.x || bbox.y < visibleRoi.y
+            || bbox.x + bbox.w > visibleRoi.x + visibleRoi.w
+            || bbox.y + bbox.h > visibleRoi.y + visibleRoi.h
+          ) {
+            msg('Place your face in the center of the camera', RED);
+            state(false);
+          } else if (quality < task.qualityThreshold) {
+            msg('Poor image quality, please wait for focusing', RED);
+            state(false);
+          } else if ((task.angles != null) && (task.angles.pitch - pitch > task.pitchThreshold)) {
+            msg('Turn your head up', RED);
+            state(false);
+          } else if ((task.angles != null) && (pitch - task.angles.pitch > task.pitchThreshold)) {
+            msg('Turn your head down', RED);
+            state(false);
+          } else if ((task.angles != null) && (task.angles.yaw - yaw > task.yawThreshold)) {
+            msg('Turn your head right', RED);
+            state(false);
+          } else if ((task.angles != null) && (yaw - task.angles.yaw > task.yawThreshold)) {
+            msg('Turn your head left', RED);
+            state(false);
+          } else {
+            msg('Hold still', GREEN);
+            state(true);
+            color = GREEN;
+          }
+          const { x, y, w, h } = bbox;
+          cord(debounce({ x, y, w, h }));
+        } else {
+          msg('Place your face in the center of the camera', RED);
+        }
+      };
+
+      const drawImage = () => {
+        context.clearRect(0, 0, width, height);
+        context.drawImage(video, 0, 0, width, height);
+      };
+
+      setTimeout(() => initFacewasm((f) => {
+
+        const onPlay = () => {
+          try {
+            drawImage();
+            process(f);
+          } finally {
+            setTimeout(() => onPlay());
+          }
+        };
+
+        onPlay();
+      }));
+
+    })();
+  </script>
+</body>
+
+</html>
