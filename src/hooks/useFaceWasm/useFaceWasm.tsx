@@ -12,6 +12,8 @@ import createMainLoop from './utils/createMainLoop';
 
 import { CC_VIDEO_HEIGHT, CC_VIDEO_WIDTH } from '../../config/params';
 
+import recorder from './recorder';
+
 const notifier = Source.merge([
     stateEmitter,
     cordEmitter,
@@ -52,6 +54,8 @@ export const useFaceWasm = () => {
         if (!stream) {
             throw new Error();
         }
+
+        recorder.provideStream(stream);
 
         const drawHelper = createDraw(context, {
             height,

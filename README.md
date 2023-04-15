@@ -12,3 +12,30 @@ It uses [FaceWASM](https://github.com/oriolmapu/FaceWASM) - face detection imple
 npm install
 npm start
 ```
+
+## Code sample
+
+```tsx
+export const verifyCompleteEmitter = Source.multicast(() =>
+    Source
+        .join([
+            stateEmitter,
+            Source.fromInterval(1_000),
+        ])
+        .reduce((acm, [{ state: isValid }]) => {
+            if (isValid) {
+                return acm + 1;
+            }
+            return 0;
+        }, 0)
+        .tap((ticker) => {
+            if (ticker === 1) {
+                recorder.beginRecord();
+            }
+        })
+        .filter((ticker) => ticker === CC_SECONDS_TO_VERIFY)
+        .tap(() => {
+            recorder.endRecord();
+        })
+);
+```

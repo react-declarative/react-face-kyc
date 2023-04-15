@@ -10,6 +10,8 @@ import useFaceWasm, { verifyCompleteEmitter } from '../../hooks/useFaceWasm';
 
 import { CC_VIDEO_HEIGHT, CC_VIDEO_WIDTH } from '../../config/params';
 
+import recorder from '../../hooks/useFaceWasm/recorder';
+
 import history from '../../history';
 
 const useStyles = makeStyles()({
@@ -50,6 +52,18 @@ export const Content = () => {
     useEffect(() => () => {
         stopCapture();
     }, [stopCapture]);
+
+    useEffect(() => recorder.resultSubject.once((blob) => {
+        const link = document.createElement("a");
+        link.download = "verify.webm";
+        link.href = URL.createObjectURL(blob);
+        document.body.appendChild(link);
+        link.click();
+        queueMicrotask(() => {
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
+        });
+    }))
 
     return (
         <Box className={classes.root}>

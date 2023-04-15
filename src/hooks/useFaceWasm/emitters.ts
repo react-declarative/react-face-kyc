@@ -2,6 +2,8 @@ import { Source } from 'react-declarative';
 
 import { CC_SECONDS_TO_VERIFY } from '../../config/params';
 
+import recorder from './recorder';
+
 export const messageEmitter = Source.multicast(() =>
     Source.create<{
         type: "facewasm-msg";
@@ -84,12 +86,11 @@ export const verifyCompleteEmitter = Source.multicast(() =>
         }, 0)
         .tap((ticker) => {
             if (ticker === 1) {
-                console.log('See MediaRecorder API to record mp4 and send to server with a closure');
-                console.log('P.S. You should start the new record and drop previous on every ticker===1');
+                recorder.beginRecord();
             }
         })
         .filter((ticker) => ticker === CC_SECONDS_TO_VERIFY)
         .tap(() => {
-            console.log('Will be called once, so end your record');
+            recorder.endRecord();
         })
 );
